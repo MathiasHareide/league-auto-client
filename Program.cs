@@ -3,7 +3,7 @@ using System.Text.Json;
 using System.Diagnostics;
 
 class Program
-{    
+{
     private static int port;
     private static int pickChampId = -3;
     private static int banIndex = -1;
@@ -25,7 +25,7 @@ class Program
         var previousPhase = "NULL";
         while (true)
         {
-            var phase = await GetPhase() ?? null;
+            var phase = await GetPhase();
             if (phase != previousPhase)
             {
                 Console.WriteLine($"Entered \"{phase}\" phase from \"{previousPhase}\"");
@@ -142,8 +142,12 @@ class Program
                     banIndex++;
                     await SelectChamp(id, champBanIds[banIndex]);
                 }
-                if (instaBan || timer.GetProperty("adjustedTimeLeftInPhase").GetInt32() < 3333 || banIndex - 1 >= champBanIds.Count)
+                var adjustedTimeLeftInPhase = timer.GetProperty("adjustedTimeLeftInPhase").GetInt32();
+                if (instaBan || adjustedTimeLeftInPhase <= 1111 || banIndex - 1 >= champBanIds.Count)
+                {
+                    Console.WriteLine($"banned champ with {adjustedTimeLeftInPhase} milliseconds left");
                     await LockIn(id, champBanIds[banIndex]);
+                }
             }
             else if (type == "pick")
             {
