@@ -59,7 +59,7 @@ class Program
         while (pickChampInput)
         {
             Console.WriteLine("Type in name of champ you want to PLAY... (bravery (or leave empty) for BRAVERY)");
-            var input = Console.ReadLine()?.ToLower().Replace(" ", "");
+            var input = Console.ReadLine()?.ToLower().Replace(" ", "").Replace("'", "");
             if (input == "" || input == "bravery")
             {
                 pickChampId = -3;
@@ -75,7 +75,7 @@ class Program
         while (true)
         {
             Console.WriteLine("Type in name of champ(s) you want to BAN in order of priority... (example: \"ryze, aurelion sol, vladimir, belveth, jarvaniv\")");
-            var input = Console.ReadLine()?.ToLower().Replace(" ", "") ?? "";
+            var input = Console.ReadLine()?.ToLower().Replace(" ", "").Replace("'", "") ?? "";
             List<string> badChamps = [];
             foreach (var s in input.Split(","))
             {
@@ -293,7 +293,7 @@ class Program
         foreach (var champion in dataElement.EnumerateObject())
         {
             var id = champion.Value.GetProperty("key").GetString() ?? throw new Exception("bad champion key");
-            var name = champion.Value.GetProperty("name").GetString()?.ToLower().Replace(" ", "") ?? throw new Exception("bad champion name");
+            var name = champion.Value.GetProperty("name").GetString()?.ToLower().Replace(" ", "").Replace("'", "") ?? throw new Exception("bad champion name");
             champions.Add(name, int.Parse(id));
         }
     }
