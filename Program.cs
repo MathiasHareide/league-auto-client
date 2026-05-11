@@ -143,7 +143,7 @@ class Program
                     await SelectChamp(id, champBanIds[banIndex]);
                 }
                 var adjustedTimeLeftInPhase = timer.GetProperty("adjustedTimeLeftInPhase").GetInt32();
-                if (instaBan || adjustedTimeLeftInPhase <= 1111 || banIndex - 1 >= champBanIds.Count)
+                if (instaBan || adjustedTimeLeftInPhase <= 2222 || banIndex - 1 >= champBanIds.Count)
                 {
                     Console.WriteLine($"banned champ with {adjustedTimeLeftInPhase} milliseconds left");
                     await LockIn(id, champBanIds[banIndex]);
