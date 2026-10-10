@@ -7,9 +7,9 @@ class Program
 {
     private const int BraveryChampionId = -3;
     private const int PollDelayMilliseconds = 500;
-    private const int InProgressDelayMilliseconds = 5_000;
-    private const int ConnectionRetryDelayMilliseconds = 5_555;
-    private const int BanLockThresholdMilliseconds = 2_222;
+    private const int InProgressDelayMilliseconds = 5000;
+    private const int ConnectionRetryDelayMilliseconds = 5555;
+    private const int BanLockThresholdMilliseconds = 2222;
 
     private static int port;
     private static int pickChampId = BraveryChampionId;
@@ -19,6 +19,7 @@ class Program
 
     private static readonly List<int> champBanIds = [];
     private static readonly Dictionary<string, int> champions = [];
+    private static readonly Lock stateLock = new();
 
     private static readonly HttpClient client = new(
         new HttpClientHandler { ServerCertificateCustomValidationCallback = (_, _, _, _) => true }
@@ -100,7 +101,7 @@ class Program
 
     private static int GetPollDelay(string? phase)
     {
-        return phase == "ChampSelect" ? PollDelayMilliseconds : 1_000;
+        return phase == "ChampSelect" ? PollDelayMilliseconds : 1000;
     }
 
     private static async Task AcceptReadyCheck(CancellationToken cancellationToken)
@@ -255,8 +256,12 @@ class Program
             Console.WriteLine($"Action {actionId} has no type.");
             return;
         }
-        if (processedActions.Contains(actionId))
-            return;
+
+        lock (stateLock)
+        {
+            if (processedActions.Contains(actionId))
+                return;
+        }
 
         switch (type)
         {
@@ -284,11 +289,17 @@ class Program
             if (!nextBanId.HasValue)
             {
                 Console.WriteLine("No configured ban remains for this ban action.");
-
-                processedActions.Add(actionId);
+                lock (stateLock)
+                {
+                    processedActions.Add(actionId);
+                }
                 return;
             }
-            banIndex++;
+
+            lock (stateLock)
+            {
+                banIndex++;
+            }
 
             var selected = await SelectChamp(actionId, nextBanId.Value, cancellationToken);
             if (!selected)
@@ -305,15 +316,23 @@ class Program
 
         var locked = await LockIn(actionId, championId, cancellationToken);
         if (locked)
-            processedActions.Add(actionId);
+        {
+            lock (stateLock)
+            {
+                processedActions.Add(actionId);
+            }
+        }
     }
 
     private static int? GetNextBanId()
     {
-        var nextIndex = banIndex + 1;
-        if (nextIndex < 0 || nextIndex >= champBanIds.Count)
-            return null;
-        return champBanIds[nextIndex];
+        lock (stateLock)
+        {
+            var nextIndex = banIndex + 1;
+            if (nextIndex < 0 || nextIndex >= champBanIds.Count)
+                return null;
+            return champBanIds[nextIndex];
+        }
     }
 
     private static async Task HandlePickAction(
@@ -329,7 +348,12 @@ class Program
             var locked = await LockIn(actionId, pickChampId, cancellationToken);
 
             if (locked)
-                processedActions.Add(actionId);
+            {
+                lock (stateLock)
+                {
+                    processedActions.Add(actionId);
+                }
+            }
             return;
         }
 
@@ -352,7 +376,12 @@ class Program
         var result = await LockIn(actionId, pickChampId, cancellationToken);
 
         if (result)
-            processedActions.Add(actionId);
+        {
+            lock (stateLock)
+            {
+                processedActions.Add(actionId);
+            }
+        }
     }
 
     private static async Task<bool> IsValidPick(int championId, CancellationToken cancellationToken)
@@ -463,31 +492,32 @@ class Program
         return new Uri($"https://127.0.0.1:{port}{path}");
     }
 
-    private static async Task<string?> FindLockPath()
+    private static string? FindLockPath()
     {
+        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+
         var defaultPaths = new[]
         {
             @"C:\Riot Games\League of Legends\lockfile",
             @"C:\Games\Riot Games\League of Legends\lockfile",
-            @"C:\Program Files\Riot Games\League of Legends\lockfile",
-            @"C:\Program Files (x86)\Riot Games\League of Legends\lockfile",
+            Path.Combine(programFiles, "Riot Games", "League of Legends", "lockfile"),
+            Path.Combine(programFilesX86, "Riot Games", "League of Legends", "lockfile"),
         };
 
         foreach (var path in defaultPaths)
+        {
             if (Path.Exists(path))
             {
                 Console.WriteLine($"Found lockfile using default path: {path}");
-
                 return path;
             }
+        }
 
-        foreach (var process in Process.GetProcesses())
+        foreach (var process in Process.GetProcessesByName("LeagueClient"))
         {
             try
             {
-                if (!IsLeagueClientProcess(process))
-                    continue;
-
                 var executablePath = process.MainModule?.FileName;
                 if (string.IsNullOrEmpty(executablePath))
                     continue;
@@ -506,9 +536,7 @@ class Program
             catch (Exception ex)
                 when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
             {
-                Console.WriteLine(
-                    $"Unable to inspect process {process.Id} ({process.ProcessName}): {ex.Message}"
-                );
+                // Suppress access issues on restricted system processes
             }
             finally
             {
@@ -517,11 +545,6 @@ class Program
         }
 
         return null;
-    }
-
-    private static bool IsLeagueClientProcess(Process process)
-    {
-        return process.ProcessName.Contains("LeagueClient", StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<string?> ReadLockfile(
@@ -557,7 +580,7 @@ class Program
 
         while (!cancellationToken.IsCancellationRequested)
         {
-            var lockPath = await FindLockPath();
+            var lockPath = FindLockPath();
             if (lockPath is not null)
             {
                 var lockContent = await ReadLockfile(lockPath, cancellationToken);
@@ -572,7 +595,7 @@ class Program
             }
 
             Console.WriteLine(
-                "Failed getting lockfile. Retrying in {ConnectionRetryDelayMilliseconds} ms... (open your client)"
+                $"Failed getting lockfile. Retrying in {ConnectionRetryDelayMilliseconds} ms... (open your client)"
             );
 
             await Task.Delay(ConnectionRetryDelayMilliseconds, cancellationToken);
@@ -702,7 +725,10 @@ class Program
 
     private static void ResetChampSelectState()
     {
-        banIndex = -1;
-        processedActions.Clear();
+        lock (stateLock)
+        {
+            banIndex = -1;
+            processedActions.Clear();
+        }
     }
 }
