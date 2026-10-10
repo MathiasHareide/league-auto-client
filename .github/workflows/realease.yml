@@ -23,7 +23,7 @@ jobs:
                   dotnet-version: "9.0.x"
 
             - name: Publish Executable
-              run: dotnet publish -c Release -r win-x64 -p:Version=1.0.${{ github.run_number }} -o ./publish
+              run: dotnet publish "league auto client.csproj" -c Release -r win-x64 -p:Version=1.0.${{ github.run_number }} -p:PublishReferencesDocumentationFiles=false -o ./publish
 
             - name: Zip Artifact
               uses: vimtor/action-zip@v1
