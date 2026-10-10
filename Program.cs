@@ -2,6 +2,7 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using AutoUpdaterDotNET;
 
 class Program
 {
@@ -27,6 +28,8 @@ class Program
 
     private static async Task Main()
     {
+        AutoUpdater.Start("https://raw.githubusercontent.com/MathiasHareide/league-auto-client/main/updates.xml");
+
         using var cancellation = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) =>
         {

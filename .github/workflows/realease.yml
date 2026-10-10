@@ -1,0 +1,69 @@
+name: Build and Auto-Update
+
+on:
+    push:
+        branches: ["main"]
+
+permissions:
+    contents: write
+
+jobs:
+    build:
+        runs-on: windows-latest
+
+        steps:
+            - name: Checkout Code
+              uses: actions/checkout@v4
+              with:
+                  token: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Setup .NET
+              uses: actions/setup-dotnet@v4
+              with:
+                  dotnet-version: "9.0.x"
+
+            - name: Set Version
+              shell: pwsh
+              run: |
+                  $version = "1.0.${{ github.run_number }}"
+                  echo "VERSION=$version" >> $env:GITHUB_ENV
+                  Write-Host "Assigned Version: $version"
+
+            - name: Publish Executable
+              run: dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:Version=${{ env.VERSION }} -o ./publish
+
+            - name: Zip Artifact
+              uses: vimtor/action-zip@v1
+              with:
+                  files: ./publish/
+                  dest: league-auto-client-win-x64.zip
+
+            - name: Create or Update Rolling GitHub Release
+              uses: softprops/action-gh-release@v1
+              with:
+                  tag_name: latest
+                  files: league-auto-client-win-x64.zip
+                  body: "Automated build for commit ${{ github.sha }}"
+                  prerelease: false
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Generate and Commit updates.xml
+              shell: pwsh
+              run: |
+                  $xml = @"
+                  <?xml version="1.0" encoding="UTF-8"?>
+                  <item>
+                      <version>${{ env.VERSION }}</version>
+                      <url>https://github.com/${{ github.repository }}/releases/download/latest/league-auto-client-win-x64.zip</url>
+                      <changelog>https://github.com/${{ github.repository }}/releases</changelog>
+                      <mandatory>false</mandatory>
+                  </item>
+                  "@
+                  Set-Content -Path "updates.xml" -Value $xml -Encoding UTF8
+
+                  git config --global user.name "github-actions[bot]"
+                  git config --global user.email "github-actions[bot]@users.noreply.github.com"
+                  git add updates.xml
+                  git commit -m "chore: auto-update updates.xml to version ${{ env.VERSION }}"
+                  git push
