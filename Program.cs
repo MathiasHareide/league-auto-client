@@ -136,12 +136,50 @@ class Program
 
     private static void BanInput()
     {
+        var bansFilePath = Path.Combine(AppContext.BaseDirectory, "bans.txt");
+        string input = string.Empty;
+
+        if (File.Exists(bansFilePath))
+        {
+            try
+            {
+                input = File.ReadAllText(bansFilePath);
+                Console.WriteLine($"Loaded bans from 'bans.txt': {input.Trim()}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to read 'bans.txt': {ex.Message}");
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            Console.WriteLine("Bans file was empty or missing. Falling back to manual input.");
+            input = PromptForManualBanInput();
+        }
+
+        ParseAndStoreBans(input);
+        instaBan = champBanIds.Count == 1;
+    }
+
+    private static string PromptForManualBanInput()
+    {
         while (true)
         {
             Console.WriteLine("Type in name of champ(s) you want to BAN in order of priority... (example: \"ryze, aurelion sol, vladimir, belveth, jarvaniv\")");
+            var input = Console.ReadLine();
+            if (!string.IsNullOrWhiteSpace(input))
+                return input;
+        }
+    }
 
-            var input = Console.ReadLine() ?? "";
+    private static void ParseAndStoreBans(string input)
+    {
+        while (true)
+        {
             var badChamps = new List<string>();
+            champBanIds.Clear();
+
             foreach (var rawName in input.Split(','))
             {
                 var name = NormalizeChampionName(rawName);
@@ -158,12 +196,21 @@ class Program
                 if (!champBanIds.Contains(championId))
                     champBanIds.Add(championId);
             }
-            if (badChamps.Count == 0)
+
+            if (badChamps.Count == 0 && champBanIds.Count > 0)
                 break;
 
-            Console.WriteLine($"{string.Join(", ", badChamps)} are not valid.");
+            if (badChamps.Count > 0)
+            {
+                Console.WriteLine($"{string.Join(", ", badChamps)} are not valid champions.");
+            }
+            else
+            {
+                Console.WriteLine("No valid champions were provided.");
+            }
+
+            input = PromptForManualBanInput();
         }
-        instaBan = champBanIds.Count == 1;
     }
 
     private static string NormalizeChampionName(string? input)
