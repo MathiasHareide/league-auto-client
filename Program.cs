@@ -20,12 +20,11 @@ class Program
     private static readonly List<int> champBanIds = [];
     private static readonly Dictionary<string, int> champions = [];
 
-    private static readonly HttpClient client = new(new HttpClientHandler
+    private static readonly HttpClient client = new(
+        new HttpClientHandler { ServerCertificateCustomValidationCallback = (_, _, _, _) => true }
+    )
     {
-        ServerCertificateCustomValidationCallback = (_, _, _, _) => true
-    })
-    {
-        Timeout = TimeSpan.FromSeconds(5)
+        Timeout = TimeSpan.FromSeconds(5),
     };
 
     private static readonly HashSet<int> processedActions = [];
@@ -67,16 +66,15 @@ class Program
             if (phase != previousPhase)
             {
                 Console.WriteLine($"Entered \"{phase ?? "NULL"}\" phase from \"{previousPhase}\"");
-                if (phase != "ChampSelect") ResetChampSelectState();
+                if (phase != "ChampSelect")
+                    ResetChampSelectState();
             }
 
             await HandleGamePhase(phase, cancellationToken);
 
             previousPhase = phase ?? "NULL";
 
-            await Task.Delay(
-                GetPollDelay(phase),
-                cancellationToken);
+            await Task.Delay(GetPollDelay(phase), cancellationToken);
         }
     }
 
@@ -91,9 +89,7 @@ class Program
                 await HandleChampSelect(cancellationToken);
                 return;
             case "InProgress":
-                await Task.Delay(
-                    InProgressDelayMilliseconds,
-                    cancellationToken);
+                await Task.Delay(InProgressDelayMilliseconds, cancellationToken);
                 return;
             case null:
                 Console.WriteLine("\nDisconnected from league client");
@@ -109,17 +105,25 @@ class Program
 
     private static async Task AcceptReadyCheck(CancellationToken cancellationToken)
     {
-        using var response = await PostAsync("/lol-matchmaking/v1/ready-check/accept", null, cancellationToken);
-        if (!response.IsSuccessStatusCode) Console.WriteLine($"Failed to accept ready check: {(int)response.StatusCode}");
+        using var response = await PostAsync(
+            "/lol-matchmaking/v1/ready-check/accept",
+            null,
+            cancellationToken
+        );
+        if (!response.IsSuccessStatusCode)
+            Console.WriteLine($"Failed to accept ready check: {(int)response.StatusCode}");
     }
 
     private static void PickInput()
     {
-        if (!pickChampInput) return;
+        if (!pickChampInput)
+            return;
 
         while (true)
         {
-            Console.WriteLine("Type in name of champ you want to PLAY... (bravery (or leave empty) for BRAVERY)");
+            Console.WriteLine(
+                "Type in name of champ you want to PLAY... (bravery (or leave empty) for BRAVERY)"
+            );
 
             var input = NormalizeChampionName(Console.ReadLine());
             if (string.IsNullOrEmpty(input) || input == "bravery")
@@ -141,7 +145,9 @@ class Program
     {
         while (true)
         {
-            Console.WriteLine("Type in name of champ(s) you want to BAN in order of priority... (example: \"ryze, aurelion sol, vladimir, belveth, jarvaniv\")");
+            Console.WriteLine(
+                "Type in name of champ(s) you want to BAN in order of priority... (example: \"ryze, aurelion sol, vladimir, belveth, jarvaniv\")"
+            );
 
             var input = Console.ReadLine() ?? "";
             var badChamps = new List<string>();
@@ -161,7 +167,8 @@ class Program
                 if (!champBanIds.Contains(championId))
                     champBanIds.Add(championId);
             }
-            if (badChamps.Count == 0) break;
+            if (badChamps.Count == 0)
+                break;
 
             Console.WriteLine($"{string.Join(", ", badChamps)} are not valid.");
         }
@@ -170,22 +177,21 @@ class Program
 
     private static string NormalizeChampionName(string? input)
     {
-        return (input ?? "")
-            .Trim()
-            .ToLowerInvariant()
-            .Replace(" ", "")
-            .Replace("'", "");
+        return (input ?? "").Trim().ToLowerInvariant().Replace(" ", "").Replace("'", "");
     }
 
     private static async Task HandleChampSelect(CancellationToken cancellationToken)
     {
         using var sessionResponse = await GetAsync(
             "/lol-champ-select/v1/session",
-            cancellationToken);
+            cancellationToken
+        );
 
         if (!sessionResponse.IsSuccessStatusCode)
         {
-            Console.WriteLine($"Couldn't get champ select session data: {(int)sessionResponse.StatusCode}");
+            Console.WriteLine(
+                $"Couldn't get champ select session data: {(int)sessionResponse.StatusCode}"
+            );
             return;
         }
 
@@ -194,13 +200,13 @@ class Program
         using var document = JsonDocument.Parse(sessionJson);
         var root = document.RootElement;
         var phase = GetChampSelectPhase(root);
-        if (phase == "PLANNING") return;
+        if (phase == "PLANNING")
+            return;
         LogUnknownChampSelectPhase(phase);
 
         var playerCellId = root.GetProperty("localPlayerCellId").GetInt32();
         var timer = root.GetProperty("timer");
-        var actions = root
-            .GetProperty("actions")
+        var actions = root.GetProperty("actions")
             .EnumerateArray()
             .SelectMany(group => group.EnumerateArray())
             .ToArray();
@@ -208,34 +214,39 @@ class Program
         foreach (var action in actions)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!IsPendingPlayerAction(action, playerCellId)) continue;
+            if (!IsPendingPlayerAction(action, playerCellId))
+                continue;
             await HandleAction(action, timer, cancellationToken);
         }
     }
 
     private static string GetChampSelectPhase(JsonElement root)
     {
-        return root
-            .GetProperty("timer")
-            .GetProperty("phase")
-            .GetString() ?? "";
+        return root.GetProperty("timer").GetProperty("phase").GetString() ?? "";
     }
 
     private static void LogUnknownChampSelectPhase(string phase)
     {
-        if (phase is "FINALIZATION" or "BAN_PICK" or "GAME_STARTING") return;
+        if (phase is "FINALIZATION" or "BAN_PICK" or "GAME_STARTING")
+            return;
 
         Console.WriteLine($"new champ select phase just dropped: \"{phase}\"");
     }
 
     private static bool IsPendingPlayerAction(JsonElement action, int playerCellId)
     {
-        if (!action.GetProperty("isInProgress").GetBoolean()) return false;
-        if (action.GetProperty("actorCellId").GetInt32() != playerCellId) return false;
+        if (!action.GetProperty("isInProgress").GetBoolean())
+            return false;
+        if (action.GetProperty("actorCellId").GetInt32() != playerCellId)
+            return false;
         return !action.GetProperty("completed").GetBoolean();
     }
 
-    private static async Task HandleAction(JsonElement action, JsonElement timer, CancellationToken cancellationToken)
+    private static async Task HandleAction(
+        JsonElement action,
+        JsonElement timer,
+        CancellationToken cancellationToken
+    )
     {
         var actionId = action.GetProperty("id").GetInt32();
         var type = action.GetProperty("type").GetString();
@@ -244,7 +255,8 @@ class Program
             Console.WriteLine($"Action {actionId} has no type.");
             return;
         }
-        if (processedActions.Contains(actionId)) return;
+        if (processedActions.Contains(actionId))
+            return;
 
         switch (type)
         {
@@ -257,7 +269,11 @@ class Program
         }
     }
 
-    private static async Task HandleBanAction(JsonElement action, JsonElement timer, CancellationToken cancellationToken)
+    private static async Task HandleBanAction(
+        JsonElement action,
+        JsonElement timer,
+        CancellationToken cancellationToken
+    )
     {
         var actionId = action.GetProperty("id").GetInt32();
         var championId = action.GetProperty("championId").GetInt32();
@@ -275,46 +291,49 @@ class Program
             banIndex++;
 
             var selected = await SelectChamp(actionId, nextBanId.Value, cancellationToken);
-            if (!selected) return;
+            if (!selected)
+                return;
             championId = nextBanId.Value;
         }
 
         var timeLeft = timer.GetProperty("adjustedTimeLeftInPhase").GetInt32();
         var shouldLock = instaBan || timeLeft <= BanLockThresholdMilliseconds;
-        if (!shouldLock) return;
+        if (!shouldLock)
+            return;
 
         Console.WriteLine($"Banning champion {championId} with {timeLeft} milliseconds left");
 
         var locked = await LockIn(actionId, championId, cancellationToken);
-        if (locked) processedActions.Add(actionId);
+        if (locked)
+            processedActions.Add(actionId);
     }
 
     private static int? GetNextBanId()
     {
         var nextIndex = banIndex + 1;
-        if (nextIndex < 0 || nextIndex >= champBanIds.Count) return null;
+        if (nextIndex < 0 || nextIndex >= champBanIds.Count)
+            return null;
         return champBanIds[nextIndex];
     }
 
-    private static async Task HandlePickAction(JsonElement action, CancellationToken cancellationToken)
+    private static async Task HandlePickAction(
+        JsonElement action,
+        CancellationToken cancellationToken
+    )
     {
         var actionId = action.GetProperty("id").GetInt32();
         var currentChampionId = action.GetProperty("championId").GetInt32();
 
         if (!pickChampInput)
         {
-            var locked = await LockIn(
-                actionId,
-                pickChampId,
-                cancellationToken);
+            var locked = await LockIn(actionId, pickChampId, cancellationToken);
 
-            if (locked) processedActions.Add(actionId);
+            if (locked)
+                processedActions.Add(actionId);
             return;
         }
 
-        var valid = await IsValidPick(
-            pickChampId,
-            cancellationToken);
+        var valid = await IsValidPick(pickChampId, cancellationToken);
 
         if (!valid)
         {
@@ -324,107 +343,119 @@ class Program
 
         if (currentChampionId != pickChampId)
         {
-            var selected = await SelectChamp(
-                actionId,
-                pickChampId,
-                cancellationToken);
+            var selected = await SelectChamp(actionId, pickChampId, cancellationToken);
 
-            if (!selected) return;
+            if (!selected)
+                return;
         }
 
-        var result = await LockIn(
-            actionId,
-            pickChampId,
-            cancellationToken);
+        var result = await LockIn(actionId, pickChampId, cancellationToken);
 
-        if (result) processedActions.Add(actionId);
+        if (result)
+            processedActions.Add(actionId);
     }
 
     private static async Task<bool> IsValidPick(int championId, CancellationToken cancellationToken)
     {
-        if (championId == BraveryChampionId) return true;
+        if (championId == BraveryChampionId)
+            return true;
 
-        using var response = await GetAsync("/lol-champ-select/v1/pickable-champion-ids", cancellationToken);
+        using var response = await GetAsync(
+            "/lol-champ-select/v1/pickable-champion-ids",
+            cancellationToken
+        );
 
-        if (!response.IsSuccessStatusCode) return false;
+        if (!response.IsSuccessStatusCode)
+            return false;
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
 
         using var document = JsonDocument.Parse(json);
         foreach (var element in document.RootElement.EnumerateArray())
         {
-            if (!element.TryGetInt32(out var id)) continue;
-            if (id == championId) return true;
-            if (id < 1 && id != BraveryChampionId) Console.WriteLine($"There is a pickable special non-bravery champion ID: {id}.");
+            if (!element.TryGetInt32(out var id))
+                continue;
+            if (id == championId)
+                return true;
+            if (id < 1 && id != BraveryChampionId)
+                Console.WriteLine($"There is a pickable special non-bravery champion ID: {id}.");
         }
 
         return false;
     }
 
-    private static async Task<bool> SelectChamp(int actionId, int championId, CancellationToken cancellationToken)
+    private static async Task<bool> SelectChamp(
+        int actionId,
+        int championId,
+        CancellationToken cancellationToken
+    )
     {
         var payload = JsonSerializer.Serialize(new { championId });
-        using var content = new StringContent(
-            payload,
-            Encoding.UTF8,
-            "application/json");
+        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
         using var response = await PatchAsync(
             $"/lol-champ-select/v1/session/actions/{actionId}",
             content,
-            cancellationToken);
+            cancellationToken
+        );
 
-        if (response.IsSuccessStatusCode) return true;
-        Console.WriteLine($"Failed to select champion {championId} for action {actionId}: {(int)response.StatusCode}");
+        if (response.IsSuccessStatusCode)
+            return true;
+        Console.WriteLine(
+            $"Failed to select champion {championId} for action {actionId}: {(int)response.StatusCode}"
+        );
 
         return false;
     }
 
-    private static async Task<bool> LockIn(int actionId, int championId, CancellationToken cancellationToken)
+    private static async Task<bool> LockIn(
+        int actionId,
+        int championId,
+        CancellationToken cancellationToken
+    )
     {
-        var payload = JsonSerializer.Serialize(
-            new
-            {
-                championId,
-                completed = true
-            });
+        var payload = JsonSerializer.Serialize(new { championId, completed = true });
 
-        using var content = new StringContent(
-            payload,
-            Encoding.UTF8,
-            "application/json");
+        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
 
         using var response = await PatchAsync(
             $"/lol-champ-select/v1/session/actions/{actionId}",
             content,
-            cancellationToken);
+            cancellationToken
+        );
 
-        if (response.IsSuccessStatusCode) return true;
+        if (response.IsSuccessStatusCode)
+            return true;
 
-        Console.WriteLine($"Failed to lock in champion {championId} for action {actionId}: {(int)response.StatusCode}");
+        Console.WriteLine(
+            $"Failed to lock in champion {championId} for action {actionId}: {(int)response.StatusCode}"
+        );
 
         return false;
     }
 
-    private static async Task<HttpResponseMessage> PostAsync(string path, HttpContent? content, CancellationToken cancellationToken)
+    private static async Task<HttpResponseMessage> PostAsync(
+        string path,
+        HttpContent? content,
+        CancellationToken cancellationToken
+    )
     {
-        return await client.PostAsync(
-            BuildClientUri(path),
-            content,
-            cancellationToken);
+        return await client.PostAsync(BuildClientUri(path), content, cancellationToken);
     }
 
-    private static async Task<HttpResponseMessage> PatchAsync(string path, HttpContent content, CancellationToken cancellationToken)
+    private static async Task<HttpResponseMessage> PatchAsync(
+        string path,
+        HttpContent content,
+        CancellationToken cancellationToken
+    )
     {
-        return await client.PatchAsync(
-            BuildClientUri(path),
-            content,
-            cancellationToken);
+        return await client.PatchAsync(BuildClientUri(path), content, cancellationToken);
     }
 
-    private static async Task<HttpResponseMessage> GetAsync(string path, CancellationToken cancellationToken)
+    private static async Task<HttpResponseMessage> GetAsync(
+        string path,
+        CancellationToken cancellationToken
+    )
     {
-        return await client.GetAsync(
-            BuildClientUri(path),
-            cancellationToken);
+        return await client.GetAsync(BuildClientUri(path), cancellationToken);
     }
 
     private static Uri BuildClientUri(string path)
@@ -436,11 +467,11 @@ class Program
     {
         var defaultPaths = new[]
         {
-        @"C:\Riot Games\League of Legends\lockfile",
-        @"C:\Games\Riot Games\League of Legends\lockfile",
-        @"C:\Program Files\Riot Games\League of Legends\lockfile",
-        @"C:\Program Files (x86)\Riot Games\League of Legends\lockfile"
-    };
+            @"C:\Riot Games\League of Legends\lockfile",
+            @"C:\Games\Riot Games\League of Legends\lockfile",
+            @"C:\Program Files\Riot Games\League of Legends\lockfile",
+            @"C:\Program Files (x86)\Riot Games\League of Legends\lockfile",
+        };
 
         foreach (var path in defaultPaths)
             if (Path.Exists(path))
@@ -454,23 +485,30 @@ class Program
         {
             try
             {
-                if (!IsLeagueClientProcess(process)) continue;
+                if (!IsLeagueClientProcess(process))
+                    continue;
 
                 var executablePath = process.MainModule?.FileName;
-                if (string.IsNullOrEmpty(executablePath)) continue;
+                if (string.IsNullOrEmpty(executablePath))
+                    continue;
 
                 var directory = Path.GetDirectoryName(executablePath);
-                if (string.IsNullOrEmpty(directory)) continue;
+                if (string.IsNullOrEmpty(directory))
+                    continue;
 
                 var lockPath = Path.Combine(directory, "lockfile");
-                if (!Path.Exists(lockPath)) continue;
+                if (!Path.Exists(lockPath))
+                    continue;
 
                 Console.WriteLine($"Found lockfile using running process: {lockPath}");
                 return lockPath;
             }
-            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+            catch (Exception ex)
+                when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
             {
-                Console.WriteLine($"Unable to inspect process {process.Id} ({process.ProcessName}): {ex.Message}");
+                Console.WriteLine(
+                    $"Unable to inspect process {process.Id} ({process.ProcessName}): {ex.Message}"
+                );
             }
             finally
             {
@@ -486,7 +524,10 @@ class Program
         return process.ProcessName.Contains("LeagueClient", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static async Task<string?> ReadLockfile(string path, CancellationToken cancellationToken)
+    private static async Task<string?> ReadLockfile(
+        string path,
+        CancellationToken cancellationToken
+    )
     {
         try
         {
@@ -494,7 +535,8 @@ class Program
                 path,
                 FileMode.Open,
                 FileAccess.Read,
-                FileShare.ReadWrite | FileShare.Delete);
+                FileShare.ReadWrite | FileShare.Delete
+            );
 
             using var reader = new StreamReader(stream);
             return await reader.ReadToEndAsync(cancellationToken);
@@ -518,10 +560,7 @@ class Program
             var lockPath = await FindLockPath();
             if (lockPath is not null)
             {
-                var lockContent =
-                    await ReadLockfile(
-                        lockPath,
-                        cancellationToken);
+                var lockContent = await ReadLockfile(lockPath, cancellationToken);
 
                 if (TryConfigureClient(lockContent))
                 {
@@ -532,7 +571,9 @@ class Program
                 }
             }
 
-            Console.WriteLine("Failed getting lockfile. Retrying in {ConnectionRetryDelayMilliseconds} ms... (open your client)");
+            Console.WriteLine(
+                "Failed getting lockfile. Retrying in {ConnectionRetryDelayMilliseconds} ms... (open your client)"
+            );
 
             await Task.Delay(ConnectionRetryDelayMilliseconds, cancellationToken);
         }
@@ -540,7 +581,8 @@ class Program
 
     private static bool TryConfigureClient(string? lockContent)
     {
-        if (string.IsNullOrWhiteSpace(lockContent)) return false;
+        if (string.IsNullOrWhiteSpace(lockContent))
+            return false;
         var parts = lockContent.Trim().Split(':');
         if (parts.Length < 5)
         {
@@ -572,7 +614,8 @@ class Program
         while (!cancellationToken.IsCancellationRequested)
         {
             var phase = await GetPhase(cancellationToken);
-            if (phase is not null) return;
+            if (phase is not null)
+                return;
 
             await Task.Delay(PollDelayMilliseconds, cancellationToken);
         }
@@ -582,8 +625,12 @@ class Program
     {
         try
         {
-            using var response = await GetAsync("/lol-gameflow/v1/gameflow-phase", cancellationToken);
-            if (!response.IsSuccessStatusCode) return null;
+            using var response = await GetAsync(
+                "/lol-gameflow/v1/gameflow-phase",
+                cancellationToken
+            );
+            if (!response.IsSuccessStatusCode)
+                return null;
             var content = await response.Content.ReadAsStringAsync(cancellationToken);
             return content.Trim('"');
         }
@@ -614,18 +661,23 @@ class Program
 
         using var versionsDocument = JsonDocument.Parse(versionsJson);
 
-        var latestVersion = versionsDocument.RootElement
-            .EnumerateArray()
+        var latestVersion = versionsDocument
+            .RootElement.EnumerateArray()
             .FirstOrDefault()
             .GetString();
 
-        if (string.IsNullOrWhiteSpace(latestVersion)) throw new Exception("Data Dragon returned no versions.");
+        if (string.IsNullOrWhiteSpace(latestVersion))
+            throw new Exception("Data Dragon returned no versions.");
 
-        var championUrl = $"https://ddragon.leagueoflegends.com/cdn/{latestVersion}/data/en_US/champion.json";
+        var championUrl =
+            $"https://ddragon.leagueoflegends.com/cdn/{latestVersion}/data/en_US/champion.json";
 
         using var response = await client.GetAsync(championUrl, cancellationToken);
 
-        if (!response.IsSuccessStatusCode) throw new Exception($"Failed to retrieve champion data for Data Dragon {latestVersion}.");
+        if (!response.IsSuccessStatusCode)
+            throw new Exception(
+                $"Failed to retrieve champion data for Data Dragon {latestVersion}."
+            );
 
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
         using var document = JsonDocument.Parse(json);
@@ -634,13 +686,14 @@ class Program
         champions.Clear();
         foreach (var champion in data.EnumerateObject())
         {
-            var idString = champion.Value
-                .GetProperty("key")
-                .GetString();
-            var name = champion.Value
-                .GetProperty("name")
-                .GetString();
-            if (string.IsNullOrWhiteSpace(idString) || string.IsNullOrWhiteSpace(name) || !int.TryParse(idString, out var id)) continue;
+            var idString = champion.Value.GetProperty("key").GetString();
+            var name = champion.Value.GetProperty("name").GetString();
+            if (
+                string.IsNullOrWhiteSpace(idString)
+                || string.IsNullOrWhiteSpace(name)
+                || !int.TryParse(idString, out var id)
+            )
+                continue;
             champions[NormalizeChampionName(name)] = id;
         }
 
