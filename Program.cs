@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+﻿using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -25,6 +26,8 @@ class Program
     private static readonly HttpClient client = new(new HttpClientHandler { ServerCertificateCustomValidationCallback = (_, _, _, _) => true }) { Timeout = TimeSpan.FromSeconds(5) };
 
     private static readonly HashSet<int> processedActions = [];
+    private static readonly ConcurrentQueue<string> bufferedLogs = new();
+    private static bool suppressConsoleLogs = true;
 
     private static async Task Main()
     {
@@ -55,8 +58,15 @@ class Program
     private static async Task RunAsync(CancellationToken cancellationToken)
     {
         await PopulateChampDictionary(cancellationToken);
+
+        var connectionTask = ConnectToLeagueClient(cancellationToken);
+
         PickInput();
         BanInput();
+
+        FlushLogs();
+
+        await connectionTask;
 
         var previousPhase = "NULL";
         while (!cancellationToken.IsCancellationRequested)
@@ -91,7 +101,7 @@ class Program
                 await Task.Delay(InProgressDelayMilliseconds, cancellationToken);
                 return;
             case null:
-                Console.WriteLine("\nDisconnected from league client");
+                LogBuffered("\nDisconnected from league client");
                 await ConnectToLeagueClient(cancellationToken);
                 return;
         }
@@ -213,9 +223,50 @@ class Program
         }
     }
 
-    private static string NormalizeChampionName(string? input)
+    private static async Task PopulateChampDictionary(CancellationToken cancellationToken)
     {
-        return (input ?? "").Trim().ToLowerInvariant().Replace(" ", "").Replace("'", "");
+        Console.WriteLine("Loading champion dictionary...");
+
+        const string versionsUrl = "https://ddragon.leagueoflegends.com/api/versions.json";
+
+        using var versionsResponse = await client.GetAsync(versionsUrl, cancellationToken);
+
+        if (!versionsResponse.IsSuccessStatusCode)
+        {
+            throw new Exception("Failed to retrieve Data Dragon versions.");
+        }
+
+        var versionsJson = await versionsResponse.Content.ReadAsStringAsync(cancellationToken);
+
+        using var versionsDocument = JsonDocument.Parse(versionsJson);
+
+        var latestVersion = versionsDocument.RootElement.EnumerateArray().FirstOrDefault().GetString();
+
+        if (string.IsNullOrWhiteSpace(latestVersion))
+            throw new Exception("Data Dragon returned no versions.");
+
+        var championUrl = $"https://ddragon.leagueoflegends.com/cdn/{latestVersion}/data/en_US/champion.json";
+
+        using var response = await client.GetAsync(championUrl, cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+            throw new Exception($"Failed to retrieve champion data for Data Dragon {latestVersion}.");
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var document = JsonDocument.Parse(json);
+        var data = document.RootElement.GetProperty("data");
+
+        champions.Clear();
+        foreach (var champion in data.EnumerateObject())
+        {
+            var idString = champion.Value.GetProperty("key").GetString();
+            var name = champion.Value.GetProperty("name").GetString();
+            if (string.IsNullOrWhiteSpace(idString) || string.IsNullOrWhiteSpace(name) || !int.TryParse(idString, out var id))
+                continue;
+            champions[NormalizeChampionName(name)] = id;
+        }
+
+        Console.WriteLine($"Loaded {champions.Count} champions from Data Dragon {latestVersion}");
     }
 
     private static async Task HandleChampSelect(CancellationToken cancellationToken)
@@ -253,14 +304,6 @@ class Program
     private static string GetChampSelectPhase(JsonElement root)
     {
         return root.GetProperty("timer").GetProperty("phase").GetString() ?? "";
-    }
-
-    private static void LogUnknownChampSelectPhase(string phase)
-    {
-        if (phase is "FINALIZATION" or "BAN_PICK" or "GAME_STARTING")
-            return;
-
-        Console.WriteLine($"new champ select phase just dropped: \"{phase}\"");
     }
 
     private static bool IsPendingPlayerAction(JsonElement action, int playerCellId)
@@ -456,102 +499,9 @@ class Program
         return false;
     }
 
-    private static async Task<HttpResponseMessage> PostAsync(string path, HttpContent? content, CancellationToken cancellationToken)
-    {
-        return await client.PostAsync(BuildClientUri(path), content, cancellationToken);
-    }
-
-    private static async Task<HttpResponseMessage> PatchAsync(string path, HttpContent content, CancellationToken cancellationToken)
-    {
-        return await client.PatchAsync(BuildClientUri(path), content, cancellationToken);
-    }
-
-    private static async Task<HttpResponseMessage> GetAsync(string path, CancellationToken cancellationToken)
-    {
-        return await client.GetAsync(BuildClientUri(path), cancellationToken);
-    }
-
-    private static Uri BuildClientUri(string path)
-    {
-        return new Uri($"https://127.0.0.1:{port}{path}");
-    }
-
-    private static string? FindLockPath()
-    {
-        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-        var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
-
-        var defaultPaths = new[]
-        {
-            @"C:\Riot Games\League of Legends\lockfile",
-            @"C:\Games\Riot Games\League of Legends\lockfile",
-            Path.Combine(programFiles, "Riot Games", "League of Legends", "lockfile"),
-            Path.Combine(programFilesX86, "Riot Games", "League of Legends", "lockfile"),
-        };
-
-        foreach (var path in defaultPaths)
-        {
-            if (Path.Exists(path))
-            {
-                Console.WriteLine($"Found lockfile using default path: {path}");
-                return path;
-            }
-        }
-
-        foreach (var process in Process.GetProcessesByName("LeagueClient"))
-        {
-            try
-            {
-                var executablePath = process.MainModule?.FileName;
-                if (string.IsNullOrEmpty(executablePath))
-                    continue;
-
-                var directory = Path.GetDirectoryName(executablePath);
-                if (string.IsNullOrEmpty(directory))
-                    continue;
-
-                var lockPath = Path.Combine(directory, "lockfile");
-                if (!Path.Exists(lockPath))
-                    continue;
-
-                Console.WriteLine($"Found lockfile using running process: {lockPath}");
-                return lockPath;
-            }
-            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
-            {
-                // Suppress access issues on restricted system processes
-            }
-            finally
-            {
-                process.Dispose();
-            }
-        }
-
-        return null;
-    }
-
-    private static async Task<string?> ReadLockfile(string path, CancellationToken cancellationToken)
-    {
-        try
-        {
-            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-
-            using var reader = new StreamReader(stream);
-            return await reader.ReadToEndAsync(cancellationToken);
-        }
-        catch (IOException)
-        {
-            return null;
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return null;
-        }
-    }
-
     private static async Task ConnectToLeagueClient(CancellationToken cancellationToken)
     {
-        Console.WriteLine("Connecting to league client...");
+        LogBuffered("Connecting to league client...");
 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -562,14 +512,14 @@ class Program
 
                 if (TryConfigureClient(lockContent))
                 {
-                    Console.WriteLine("Successfully connected HTTP client to League Client");
+                    LogBuffered("Successfully connected HTTP client to League Client");
 
                     await WaitForClientReady(cancellationToken);
                     return;
                 }
             }
 
-            Console.WriteLine($"Failed getting lockfile. Retrying in {ConnectionRetryDelayMilliseconds} ms... (open your client)");
+            LogBuffered($"Failed getting lockfile. Retrying in {ConnectionRetryDelayMilliseconds} ms... (open your client)");
 
             await Task.Delay(ConnectionRetryDelayMilliseconds, cancellationToken);
         }
@@ -582,17 +532,17 @@ class Program
         var parts = lockContent.Trim().Split(':');
         if (parts.Length < 5)
         {
-            Console.WriteLine("Invalid lockfile: expected at least 5 fields.");
+            LogBuffered("Invalid lockfile: expected at least 5 fields.");
             return false;
         }
         if (!int.TryParse(parts[2], out var clientPort))
         {
-            Console.WriteLine($"Invalid lockfile port: {parts[2]}");
+            LogBuffered($"Invalid lockfile port: {parts[2]}");
             return false;
         }
         if (string.IsNullOrWhiteSpace(parts[3]))
         {
-            Console.WriteLine("Invalid lockfile: missing password.");
+            LogBuffered("Invalid lockfile: missing password.");
             return false;
         }
 
@@ -637,50 +587,131 @@ class Program
         }
     }
 
-    private static async Task PopulateChampDictionary(CancellationToken cancellationToken)
+    private static string? FindLockPath()
     {
-        Console.WriteLine("Loading champion dictionary...");
+        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
 
-        const string versionsUrl = "https://ddragon.leagueoflegends.com/api/versions.json";
-
-        using var versionsResponse = await client.GetAsync(versionsUrl, cancellationToken);
-
-        if (!versionsResponse.IsSuccessStatusCode)
+        var defaultPaths = new[]
         {
-            throw new Exception("Failed to retrieve Data Dragon versions.");
+            @"C:\Riot Games\League of Legends\lockfile",
+            @"C:\Games\Riot Games\League of Legends\lockfile",
+            Path.Combine(programFiles, "Riot Games", "League of Legends", "lockfile"),
+            Path.Combine(programFilesX86, "Riot Games", "League of Legends", "lockfile"),
+        };
+
+        foreach (var path in defaultPaths)
+        {
+            if (Path.Exists(path))
+            {
+                LogBuffered($"Found lockfile using default path: {path}");
+                return path;
+            }
         }
 
-        var versionsJson = await versionsResponse.Content.ReadAsStringAsync(cancellationToken);
-
-        using var versionsDocument = JsonDocument.Parse(versionsJson);
-
-        var latestVersion = versionsDocument.RootElement.EnumerateArray().FirstOrDefault().GetString();
-
-        if (string.IsNullOrWhiteSpace(latestVersion))
-            throw new Exception("Data Dragon returned no versions.");
-
-        var championUrl = $"https://ddragon.leagueoflegends.com/cdn/{latestVersion}/data/en_US/champion.json";
-
-        using var response = await client.GetAsync(championUrl, cancellationToken);
-
-        if (!response.IsSuccessStatusCode)
-            throw new Exception($"Failed to retrieve champion data for Data Dragon {latestVersion}.");
-
-        var json = await response.Content.ReadAsStringAsync(cancellationToken);
-        using var document = JsonDocument.Parse(json);
-        var data = document.RootElement.GetProperty("data");
-
-        champions.Clear();
-        foreach (var champion in data.EnumerateObject())
+        foreach (var process in Process.GetProcessesByName("LeagueClient"))
         {
-            var idString = champion.Value.GetProperty("key").GetString();
-            var name = champion.Value.GetProperty("name").GetString();
-            if (string.IsNullOrWhiteSpace(idString) || string.IsNullOrWhiteSpace(name) || !int.TryParse(idString, out var id))
-                continue;
-            champions[NormalizeChampionName(name)] = id;
+            try
+            {
+                var executablePath = process.MainModule?.FileName;
+                if (string.IsNullOrEmpty(executablePath))
+                    continue;
+
+                var directory = Path.GetDirectoryName(executablePath);
+                if (string.IsNullOrEmpty(directory))
+                    continue;
+
+                var lockPath = Path.Combine(directory, "lockfile");
+                if (!Path.Exists(lockPath))
+                    continue;
+
+                LogBuffered($"Found lockfile using running process: {lockPath}");
+                return lockPath;
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                // Suppress access issues on restricted system processes
+            }
+            finally
+            {
+                process.Dispose();
+            }
         }
 
-        Console.WriteLine($"Loaded {champions.Count} champions from Data Dragon {latestVersion}");
+        return null;
+    }
+
+    private static async Task<string?> ReadLockfile(string path, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+
+            using var reader = new StreamReader(stream);
+            return await reader.ReadToEndAsync(cancellationToken);
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    private static async Task<HttpResponseMessage> PostAsync(string path, HttpContent? content, CancellationToken cancellationToken)
+    {
+        return await client.PostAsync(BuildClientUri(path), content, cancellationToken);
+    }
+
+    private static async Task<HttpResponseMessage> PatchAsync(string path, HttpContent content, CancellationToken cancellationToken)
+    {
+        return await client.PatchAsync(BuildClientUri(path), content, cancellationToken);
+    }
+
+    private static async Task<HttpResponseMessage> GetAsync(string path, CancellationToken cancellationToken)
+    {
+        return await client.GetAsync(BuildClientUri(path), cancellationToken);
+    }
+
+    private static Uri BuildClientUri(string path)
+    {
+        return new Uri($"https://127.0.0.1:{port}{path}");
+    }
+
+    private static void LogBuffered(string message)
+    {
+        if (suppressConsoleLogs)
+        {
+            bufferedLogs.Enqueue(message);
+        }
+        else
+        {
+            Console.WriteLine(message);
+        }
+    }
+
+    private static void FlushLogs()
+    {
+        suppressConsoleLogs = false;
+        while (bufferedLogs.TryDequeue(out var message))
+        {
+            Console.WriteLine(message);
+        }
+    }
+
+    private static void LogUnknownChampSelectPhase(string phase)
+    {
+        if (phase is "FINALIZATION" or "BAN_PICK" or "GAME_STARTING")
+            return;
+
+        Console.WriteLine($"new champ select phase just dropped: \"{phase}\"");
+    }
+
+    private static string NormalizeChampionName(string? input)
+    {
+        return (input ?? "").Trim().ToLowerInvariant().Replace(" ", "").Replace("'", "");
     }
 
     private static void ResetChampSelectState()
