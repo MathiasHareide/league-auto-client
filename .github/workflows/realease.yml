@@ -22,15 +22,8 @@ jobs:
               with:
                   dotnet-version: "9.0.x"
 
-            - name: Set Version
-              shell: pwsh
-              run: |
-                  $version = "1.0.${{ github.run_number }}"
-                  echo "VERSION=$version" >> $env:GITHUB_ENV
-                  Write-Host "Assigned Version: $version"
-
             - name: Publish Executable
-              run: dotnet publish -c Release -r win-x64 -p:Version=${{ env.VERSION }} -o ./publish
+              run: dotnet publish -c Release -r win-x64 -p:Version=1.0.${{ github.run_number }} -o ./publish
 
             - name: Zip Artifact
               uses: vimtor/action-zip@v1
@@ -38,10 +31,11 @@ jobs:
                   files: ./publish/
                   dest: league-auto-client-win-x64.zip
 
-            - name: Create or Update Rolling GitHub Release
+            - name: Create Versioned GitHub Release
               uses: softprops/action-gh-release@v1
               with:
-                  tag_name: latest
+                  tag_name: v1.0.${{ github.run_number }}
+                  name: Release v1.0.${{ github.run_number }}
                   files: league-auto-client-win-x64.zip
                   body: "Automated build for commit ${{ github.sha }}"
                   prerelease: false
@@ -51,11 +45,12 @@ jobs:
             - name: Generate and Commit updates.xml
               shell: pwsh
               run: |
+                  $version = "1.0.${{ github.run_number }}"
                   $xml = @"
                   <?xml version="1.0" encoding="UTF-8"?>
                   <item>
-                      <version>${{ env.VERSION }}</version>
-                      <url>https://github.com/${{ github.repository }}/releases/download/latest/league-auto-client-win-x64.zip</url>
+                      <version>$version</version>
+                      <url>https://github.com/${{ github.repository }}/releases/latest/download/league-auto-client-win-x64.zip</url>
                       <changelog>https://github.com/${{ github.repository }}/releases</changelog>
                       <mandatory>false</mandatory>
                   </item>
@@ -64,6 +59,7 @@ jobs:
 
                   git config --global user.name "github-actions[bot]"
                   git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+                  git config --global --add safe.directory "$PWD"
                   git add updates.xml
-                  git commit -m "chore: auto-update updates.xml to version ${{ env.VERSION }}"
+                  git commit -m "chore: auto-update updates.xml to version $version"
                   git push
