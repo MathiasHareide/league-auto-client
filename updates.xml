@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <item>
-    <version>1.0.3</version>
+    <version>1.0.4</version>
     <url>https://github.com/MathiasHareide/league-auto-client/releases/latest/download/league-auto-client-win-x64.zip</url>
     <changelog>https://github.com/MathiasHareide/league-auto-client/releases</changelog>
     <mandatory>false</mandatory>
