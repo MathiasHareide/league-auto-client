@@ -30,7 +30,7 @@ jobs:
                   Write-Host "Assigned Version: $version"
 
             - name: Publish Executable
-              run: dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:Version=${{ env.VERSION }} -o ./publish
+              run: dotnet publish -c Release -r win-x64 -p:Version=${{ env.VERSION }} -o ./publish
 
             - name: Zip Artifact
               uses: vimtor/action-zip@v1
@@ -63,7 +63,7 @@ jobs:
                   Set-Content -Path "updates.xml" -Value $xml -Encoding UTF8
 
                   git config --global user.name "github-actions[bot]"
-                  git config --global user.email "github-actions[bot]@users.noreply.github.com"
+                  git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
                   git add updates.xml
                   git commit -m "chore: auto-update updates.xml to version ${{ env.VERSION }}"
                   git push
