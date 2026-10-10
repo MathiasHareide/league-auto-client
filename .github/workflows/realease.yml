@@ -36,7 +36,9 @@ jobs:
               with:
                   tag_name: v1.0.${{ github.run_number }}
                   name: Release v1.0.${{ github.run_number }}
-                  files: league-auto-client-win-x64.zip
+                  files: |
+                      league-auto-client-win-x64.zip
+                      ./publish/league auto client.exe
                   body: "Automated build for commit ${{ github.sha }}"
                   prerelease: false
               env:
